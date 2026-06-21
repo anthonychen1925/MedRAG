@@ -36,6 +36,7 @@ import hashlib
 import json
 import re
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -314,11 +315,6 @@ def chunk_label(label: dict, requested_name: str) -> list[Chunk]:
 # Source 2: openFDA FAERS adverse-event reports
 # ---------------------------------------------------------------------------
 
-def fetch_faers_reactions(generic_name: str) -> list[tuple[str, int]]:
-    """Return the top reported adverse-event terms + counts for a drug.
-
-    Uses the openFDA /drug/event count endpoint over FAERS spontaneous reports.
-    """
 def _faers_cache_path(generic_name: str) -> Path:
     safe = re.sub(r"[^a-z0-9]+", "_", generic_name.lower()).strip("_")
     return CACHE_DIR / f"faers_{safe}.json"
@@ -360,9 +356,12 @@ def build_faers_chunk(generic_name: str, reactions: list[tuple[str, int]]) -> Op
         f"reflect reporting frequency and do NOT establish causation, incidence, or "
         f"that the drug caused the event."
     )
+    # Deep-link to the exact openFDA query this chunk was built from, so the
+    # physician lands on the cited reaction counts (not the dashboard home).
+    search = urllib.parse.quote(f'patient.drug.openfda.generic_name:"{generic_name}"')
     url = (
-        "https://fis.fda.gov/sense/app/95239e26-e0be-42d9-a960-9a5f7f1c25ee/"
-        "sheet/7a47a261-d58b-4203-a8aa-6d3021737452/state/analysis"
+        f"{OPENFDA_EVENT_URL}?search={search}"
+        f"&count=patient.reaction.reactionmeddrapt.exact&limit={FAERS_TOP_N}"
     )
     uid = hashlib.sha1(f"faers|{drug_name}".encode()).hexdigest()[:16]
     return Chunk(

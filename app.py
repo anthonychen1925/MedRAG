@@ -20,15 +20,22 @@ import html
 import json
 import re
 import traceback
+import urllib.parse
 
-from flask import Flask, render_template_string, request
+from flask import Flask, abort, render_template_string, request, url_for
 
 from config import settings
 from fhir_parser import parse_fhir_bundle
 from prompt_assembly import build_prompt
+from ingest import FAERS_TOP_N, OPENFDA_EVENT_URL, fetch_faers_reactions
 from retrieval import retrieve_chunks
 
 app = Flask(__name__)
+
+FAERS_DASHBOARD_URL = (
+    "https://www.fda.gov/drugs/surveillance/questions-and-answers-fda-adverse-event-"
+    "reporting-system-faers/fda-adverse-event-reporting-system-faers-public-dashboard"
+)
 
 DEMO_PATH = "synthetic_patients/elderly_polypharmacy.json"
 
@@ -474,18 +481,35 @@ def build_sections(report: str, n_refs: int) -> tuple[list[dict], str]:
     return sections, disclaimer
 
 
+def faers_api_url(drug_name: str) -> str:
+    search = urllib.parse.quote(f'patient.drug.openfda.generic_name:"{drug_name.lower()}"')
+    return (
+        f"{OPENFDA_EVENT_URL}?search={search}"
+        f"&count=patient.reaction.reactionmeddrapt.exact&limit={FAERS_TOP_N}"
+    )
+
+
+def faers_viewer_url(drug_name: str) -> str:
+    return url_for("faers_source", drug_name=drug_name.lower())
+
+
 def build_references(chunks) -> list[dict]:
     refs = []
     for i, c in enumerate(chunks, start=1):
         text = getattr(c, "text", "")
         snippet = re.sub(r"^\[[^\]]+\]\s*", "", text)[:240]
+        source = getattr(c, "source", "")
+        drug = getattr(c, "drug_name", "") or "unknown"
+        url = getattr(c, "url", "")
+        if source == "openFDA FAERS":
+            url = faers_viewer_url(drug)
         refs.append({
             "n": i,
-            "drug": getattr(c, "drug_name", "") or "unknown",
+            "drug": drug,
             "section": (getattr(c, "section_type", "") or "").replace("_", " "),
             "date": getattr(c, "date", ""),
-            "source": getattr(c, "source", ""),
-            "url": getattr(c, "url", ""),
+            "source": source,
+            "url": url,
             "snippet": snippet + ("…" if len(text) > 240 else ""),
         })
     return refs
@@ -504,6 +528,82 @@ def _patient_summary(record: dict) -> str:
     dx = ", ".join(x["name"] for x in record.get("diagnoses", [])[:4] if x.get("name"))
     return (f"{d.get('age', '?')}{(d.get('sex') or '?')[:1].upper()} · "
             f"{len(record.get('medications', []))} active meds · {dx or 'no active dx'}")
+
+
+FAERS_VIEWER_PAGE = """
+<!DOCTYPE html><html class="dark" lang="en">
+""" + HEAD + """
+<body class="antialiased overflow-x-hidden flex flex-col min-h-screen">
+""" + NAV + """
+<main class="flex-grow w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-12 flex flex-col gap-8">
+  <section class="flex flex-col gap-2">
+    <p class="font-label-sm text-label-sm text-clinical-teal uppercase tracking-widest">openFDA FAERS</p>
+    <h1 class="font-headline-lg text-headline-lg-mobile md:text-headline-lg text-on-surface">
+      Adverse event reports — {{ drug }}
+    </h1>
+    <p class="text-on-surface-variant font-body-md max-w-3xl">
+      Most frequently reported reaction terms for <strong class="text-on-surface">{{ drug }}</strong>
+      in the FDA Adverse Event Reporting System. Counts reflect reporting frequency only —
+      they do <em>not</em> establish causation, incidence, or that the drug caused the event.
+    </p>
+  </section>
+
+  <section class="glass-panel rounded-xl p-6 md:p-8 glow-hover">
+    <div class="overflow-x-auto">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="border-b border-white/10">
+            <th class="py-3 pr-4 font-title-md text-title-md text-primary">#</th>
+            <th class="py-3 pr-4 font-title-md text-title-md text-primary">Reaction term</th>
+            <th class="py-3 font-title-md text-title-md text-primary text-right">Reports</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for term, count in reactions %}
+          <tr class="border-b border-white/5 hover:bg-white/5">
+            <td class="py-3 pr-4 text-on-surface-variant">{{ loop.index }}</td>
+            <td class="py-3 pr-4 text-on-surface">{{ term }}</td>
+            <td class="py-3 text-on-surface text-right font-semibold">{{ "{:,}".format(count) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="flex flex-col md:flex-row gap-4 text-sm">
+    <a href="{{ api_url }}" target="_blank" rel="noopener"
+       class="glass-panel rounded-lg px-4 py-3 text-clinical-teal hover:underline">
+      View raw openFDA API data ↗
+    </a>
+    <a href="{{ dashboard_url }}" target="_blank" rel="noopener"
+       class="glass-panel rounded-lg px-4 py-3 text-on-surface-variant hover:text-clinical-teal hover:underline">
+      FDA FAERS Public Dashboard ↗
+    </a>
+    <a href="/" class="glass-panel rounded-lg px-4 py-3 text-on-surface-variant hover:text-clinical-teal hover:underline ml-auto">
+      ← Back to MedRAG
+    </a>
+  </section>
+</main>
+</body></html>
+"""
+
+
+@app.route("/source/faers/<drug_name>")
+def faers_source(drug_name: str):
+    drug = re.sub(r"[^a-z0-9\-]+", "", drug_name.lower().strip())
+    if not drug:
+        abort(404)
+    reactions = fetch_faers_reactions(drug)
+    if not reactions:
+        abort(404)
+    return render_template_string(
+        FAERS_VIEWER_PAGE,
+        drug=drug,
+        reactions=reactions,
+        api_url=faers_api_url(drug),
+        dashboard_url=FAERS_DASHBOARD_URL,
+    )
 
 
 @app.route("/", methods=["GET", "POST"])

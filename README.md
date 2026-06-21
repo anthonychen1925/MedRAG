@@ -10,7 +10,7 @@ When a physician is considering prescribing a new drug, MedRAG:
 
 1. Accepts a **FHIR R4 patient bundle** (`.json`) uploaded by the physician and parses it into a structured clinical summary.
 2. Accepts a **proposed medication** and a **free-text clinical question** from the physician.
-3. Retrieves the most relevant medical knowledge from a curated index (drug monographs, interaction databases, clinical guidelines, safety literature).
+3. Retrieves the most relevant medical knowledge from a curated index (openFDA drug labels, DDInter 2.0 interaction pairs, openFDA FAERS adverse-event signals).
 4. Feeds the parsed patient record + retrieved documents to **Claude Opus 4.8**, which reasons over the combined context.
 5. Returns a structured safety report covering interactions, contraindications, relevant lab flags, monitoring recommendations, and a top-line recommendation.
 
@@ -70,6 +70,7 @@ Claude Opus 4.8  ◄──── CONTEXT.md defines behavior here
 Structured Report  (with clickable citations → source URLs)
   │  Recommendation · Interactions · Contraindications ·
   │  Lab Flags · Monitoring · Alternatives · Uncertainty
+  │  References panel: DailyMed · DDInter drug page · FAERS viewer
   ▼
 Physician Review Interface (Flask, app.py)
 ```
@@ -224,7 +225,10 @@ The prompt assembler takes the parsed patient record, retrieved knowledge chunks
 
 Key assembly decisions:
 - Retrieved chunks are ordered by relevance score descending and labeled `[chunk N]` so Claude can cite each grounded claim; the UI turns those citations into clickable links to the source.
-- Each chunk includes its source name, section type, update date, and verification URL (DailyMed for labels, the DDInter drug page for interactions, the FAERS dashboard for adverse events) so Claude can surface freshness concerns and the physician can verify.
+- Each chunk includes its source name, section type, update date, and verification URL so Claude can surface freshness concerns and the physician can verify. Citation targets in the UI:
+  - **openFDA labels** → DailyMed label page (by SPL set id)
+  - **DDInter 2.0** → drug-detail page on ddinter2.scbdd.com (specific to the indexed drug)
+  - **openFDA FAERS** → human-readable viewer at `/source/faers/<drug>` (reaction-term table, with links to the raw openFDA API query and the FDA FAERS Public Dashboard)
 - Data quality flags from the FHIR parser are included in the patient record section so Claude is aware of what is missing.
 - The physician's free-text question appears last, immediately before Claude's response, so it is the most proximal instruction.
 
@@ -250,7 +254,7 @@ The current implementation focuses on demonstrating the core pipeline end-to-end
 
 - Patient authentication and SMART on FHIR OAuth flows
 - Real-time EHR integration (FHIR is uploaded manually as a file)
-- Production vector database (an in-memory or local index is sufficient for demo)
+- Production vector database (Redis runs locally for demo; no cloud persistence or HA)
 - Multi-patient session management
 - Audit logging and HIPAA-compliant data handling
 
@@ -272,7 +276,7 @@ The current implementation focuses on demonstrating the core pipeline end-to-end
 | `retrieval.py` | Source-balanced multi-query retrieval with per-source quotas (per-pair interactions, label safety, renal dosing, FAERS). |
 | `prompt_assembly.py` | Combines parsed patient record + retrieved chunks + proposed medication + physician question into Claude's expected input format. |
 | `api_client.py` | Anthropic SDK wrapper for calling `claude-opus-4-8`; loads `CONTEXT.md` as the system prompt. |
-| `app.py` | Flask web UI: FHIR upload, medication/question input, rendered report with clickable `[chunk N]` citations + a References & Sources panel. |
+| `app.py` | Flask web UI: FHIR upload, medication/question input, rendered report with clickable `[chunk N]` citations + a References & Sources panel. Serves a human-readable FAERS viewer at `/source/faers/<drug>`. |
 | `run_case.py` | CLI to run a single patient + drug case end-to-end (or `--retrieval-only`) for testing without the web UI. |
 | `data/drug_list.txt` | Curated ~270 commonly-prescribed generic drug names (the index's drug universe). Edit to expand coverage. |
 | `synthetic_patients/` | Sample FHIR R4 bundles for demo and testing (e.g. elderly polypharmacy, CKD metformin contraindication, low-risk control). |
@@ -288,11 +292,11 @@ The vector index is built by `ingest.py` from three free, citable sources. Every
 chunk records its `source`, `section_type`, `date`, and a verification `url`, so
 the report can attribute each grounded claim back to a primary source.
 
-| Source | What it provides | `section_type`(s) | Citation target | License |
+| Source | What it provides | `section_type`(s) | Citation target (UI) | License |
 |---|---|---|---|---|
 | **openFDA Drug Label** | FDA structured product labeling — contraindications, warnings, interactions, dosing, use in specific populations, renal/hepatic adjustments | `boxed_warning`, `contraindications`, `warnings_and_cautions`, `drug_interactions`, `dosage_and_administration`, `use_in_specific_populations`, `renal_impairment`, `hepatic_impairment`, ... | DailyMed label page | Public domain |
-| **DDInter 2.0** | Pharmacist-curated, **severity-rated** drug–drug interaction pairs (Major / Moderate / Minor) | `drug_interaction` | ddinter2.scbdd.com | CC BY-NC-SA 4.0 (non-commercial) |
-| **openFDA FAERS** | Most-reported real-world adverse events per drug (spontaneous reports; signal only, not causation) | `adverse_event_reports` | openFDA FAERS dashboard | Public domain |
+| **DDInter 2.0** | Pharmacist-curated, **severity-rated** drug–drug interaction pairs (Major / Moderate / Minor) | `drug_interaction` | DDInter drug-detail page (`/server/drug-detail/{id}/`) | CC BY-NC-SA 4.0 (non-commercial) |
+| **openFDA FAERS** | Most-reported real-world adverse events per drug (spontaneous reports; signal only, not causation) | `adverse_event_reports` | MedRAG FAERS viewer (`/source/faers/<drug>`) — table of reaction terms + counts; links to raw openFDA API and FDA dashboard | Public domain |
 
 The drug universe is defined in `data/drug_list.txt` (~270 commonly-prescribed
 generics; edit this file to add or remove drugs). DDInter interaction chunks are
@@ -336,7 +340,7 @@ cp .env.example .env          # then add ANTHROPIC_API_KEY; defaults: BGE + loca
 python ingest.py --recreate
 
 # 3a. Launch the web UI
-python app.py                 # http://127.0.0.1:5001
+python app.py                 # http://127.0.0.1:5001  (port 5001 avoids macOS AirPlay on 5000)
 
 # 3b. …or run a single case from the CLI
 python run_case.py \
