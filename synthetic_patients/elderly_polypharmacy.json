@@ -1,0 +1,232 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "id": "medrag-demo-elderly-polypharmacy",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-demo-1",
+        "gender": "female",
+        "birthDate": "1947-02-18",
+        "name": [{ "family": "Donovan", "given": ["Margaret"] }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-afib",
+        "clinicalStatus": { "coding": [{ "system": "http://terminology.hl7.org/CodeSystem/condition-clinical", "code": "active" }] },
+        "verificationStatus": { "coding": [{ "code": "confirmed" }] },
+        "code": {
+          "text": "Atrial fibrillation",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "I48.91", "display": "Atrial fibrillation" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-ckd",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Chronic kidney disease, stage 3",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "N18.3", "display": "Chronic kidney disease, stage 3 (moderate)" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-htn",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Essential hypertension",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "I10", "display": "Essential (primary) hypertension" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-t2dm",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Type 2 diabetes mellitus",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "E11.9", "display": "Type 2 diabetes mellitus without complications" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-warfarin",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "text": "warfarin sodium",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "855332", "display": "Warfarin Sodium 5 MG Oral Tablet" }]
+        },
+        "dosageInstruction": [{
+          "text": "5 mg by mouth once daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 5, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-digoxin",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "text": "digoxin",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "197604", "display": "Digoxin 0.125 MG Oral Tablet" }]
+        },
+        "dosageInstruction": [{
+          "text": "0.125 mg by mouth once daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 0.125, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-metoprolol",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "text": "metoprolol tartrate",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "866412", "display": "Metoprolol Tartrate 50 MG Oral Tablet" }]
+        },
+        "dosageInstruction": [{
+          "text": "50 mg by mouth twice daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 50, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 2, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-metformin",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "text": "metformin hydrochloride",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "860975", "display": "Metformin hydrochloride 500 MG Oral Tablet" }]
+        },
+        "dosageInstruction": [{
+          "text": "500 mg by mouth twice daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 500, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 2, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-furosemide",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": {
+          "text": "furosemide",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "313988", "display": "Furosemide 40 MG Oral Tablet" }]
+        },
+        "dosageInstruction": [{
+          "text": "40 mg by mouth once daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 40, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "AllergyIntolerance",
+        "id": "allergy-penicillin",
+        "criticality": "high",
+        "code": {
+          "text": "Penicillin",
+          "coding": [{ "system": "http://www.nlm.nih.gov/research/umls/rxnorm", "code": "7980", "display": "Penicillin" }]
+        },
+        "reaction": [{ "manifestation": [{ "text": "Anaphylaxis" }], "severity": "severe" }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-weight",
+        "status": "final",
+        "category": [{ "coding": [{ "system": "http://terminology.hl7.org/CodeSystem/observation-category", "code": "vital-signs" }] }],
+        "code": { "text": "Body Weight", "coding": [{ "system": "http://loinc.org", "code": "29463-7", "display": "Body weight" }] },
+        "valueQuantity": { "value": 64, "unit": "kg" },
+        "effectiveDateTime": "2026-05-30T09:12:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-smoking",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "social-history" }] }],
+        "code": { "text": "Tobacco smoking status", "coding": [{ "system": "http://loinc.org", "code": "72166-2" }] },
+        "valueCodeableConcept": { "text": "Former smoker" }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-egfr",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "eGFR", "coding": [{ "system": "http://loinc.org", "code": "48642-3", "display": "Glomerular filtration rate/1.73 sq M.predicted" }] },
+        "valueQuantity": { "value": 34, "unit": "mL/min/1.73m2" },
+        "referenceRange": [{ "low": { "value": 60 } }],
+        "effectiveDateTime": "2026-05-30T09:12:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-creatinine",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "Creatinine", "coding": [{ "system": "http://loinc.org", "code": "2160-0", "display": "Creatinine [Mass/volume] in Serum or Plasma" }] },
+        "valueQuantity": { "value": 1.6, "unit": "mg/dL" },
+        "referenceRange": [{ "low": { "value": 0.6 }, "high": { "value": 1.1 } }],
+        "effectiveDateTime": "2026-05-30T09:12:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-potassium",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "Potassium", "coding": [{ "system": "http://loinc.org", "code": "2823-3", "display": "Potassium [Moles/volume] in Serum or Plasma" }] },
+        "valueQuantity": { "value": 5.1, "unit": "mmol/L" },
+        "referenceRange": [{ "low": { "value": 3.5 }, "high": { "value": 5.0 } }],
+        "effectiveDateTime": "2026-05-30T09:12:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-inr",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "INR", "coding": [{ "system": "http://loinc.org", "code": "34714-6", "display": "INR in Blood by Coagulation assay" }] },
+        "valueQuantity": { "value": 2.4, "unit": "{INR}" },
+        "referenceRange": [{ "low": { "value": 2.0 }, "high": { "value": 3.0 } }],
+        "effectiveDateTime": "2026-05-30T09:12:00Z"
+      }
+    }
+  ]
+}

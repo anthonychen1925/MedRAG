@@ -1,0 +1,13 @@
+# Core pipeline
+redis>=5.0.0                  # Redis Vector Search (HNSW) client
+sentence-transformers>=3.0.0  # local BGE embeddings (default, no API cost)
+anthropic>=0.40.0             # Claude Opus 4.8 reasoning engine
+
+# Optional cloud embedding provider (only needed if EMBED_PROVIDER=voyage)
+voyageai>=0.3.0               # voyage-3-large embeddings
+
+# Web framework + utilities
+flask>=3.0.0            # physician-facing UI / orchestration
+python-dotenv>=1.0.0    # load API keys / config from .env
+requests>=2.31.0        # openFDA / DailyMed ingestion
+numpy>=1.26.0           # vector ops + stub embedder

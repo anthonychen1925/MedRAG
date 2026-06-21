@@ -1,0 +1,141 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "id": "medrag-test-ckd4-metformin",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-test-2",
+        "gender": "male",
+        "birthDate": "1952-09-04",
+        "name": [{ "family": "Whitaker", "given": ["Harold"] }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-t2dm",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Type 2 diabetes mellitus with hyperglycemia",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "E11.65" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-ckd4",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Chronic kidney disease, stage 4",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "N18.4" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "id": "cond-htn",
+        "clinicalStatus": { "coding": [{ "code": "active" }] },
+        "code": {
+          "text": "Essential hypertension",
+          "coding": [{ "system": "http://hl7.org/fhir/sid/icd-10-cm", "code": "I10" }]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-insulin",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": { "text": "insulin glargine" },
+        "dosageInstruction": [{
+          "text": "20 units subcutaneously at bedtime",
+          "route": { "text": "subcutaneous" },
+          "doseAndRate": [{ "doseQuantity": { "value": 20, "unit": "units" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-amlodipine",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": { "text": "amlodipine besylate" },
+        "dosageInstruction": [{
+          "text": "10 mg by mouth once daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 10, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "MedicationRequest",
+        "id": "med-atorvastatin",
+        "status": "active",
+        "intent": "order",
+        "medicationCodeableConcept": { "text": "atorvastatin calcium" },
+        "dosageInstruction": [{
+          "text": "40 mg by mouth once daily",
+          "route": { "text": "oral" },
+          "doseAndRate": [{ "doseQuantity": { "value": 40, "unit": "mg" } }],
+          "timing": { "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" } }
+        }]
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-egfr",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "eGFR", "coding": [{ "system": "http://loinc.org", "code": "48642-3" }] },
+        "valueQuantity": { "value": 22, "unit": "mL/min/1.73m2" },
+        "referenceRange": [{ "low": { "value": 60 } }],
+        "effectiveDateTime": "2026-06-02T08:30:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-creatinine",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "Creatinine", "coding": [{ "system": "http://loinc.org", "code": "2160-0" }] },
+        "valueQuantity": { "value": 2.8, "unit": "mg/dL" },
+        "referenceRange": [{ "low": { "value": 0.7 }, "high": { "value": 1.3 } }],
+        "effectiveDateTime": "2026-06-02T08:30:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-hba1c",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "laboratory" }] }],
+        "code": { "text": "Hemoglobin A1c", "coding": [{ "system": "http://loinc.org", "code": "4548-4" }] },
+        "valueQuantity": { "value": 9.4, "unit": "%" },
+        "referenceRange": [{ "low": { "value": 4.0 }, "high": { "value": 5.6 } }],
+        "effectiveDateTime": "2026-06-02T08:30:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "obs-weight",
+        "status": "final",
+        "category": [{ "coding": [{ "code": "vital-signs" }] }],
+        "code": { "text": "Body Weight", "coding": [{ "system": "http://loinc.org", "code": "29463-7" }] },
+        "valueQuantity": { "value": 91, "unit": "kg" },
+        "effectiveDateTime": "2026-06-02T08:30:00Z"
+      }
+    }
+  ]
+}
