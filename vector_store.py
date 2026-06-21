@@ -130,6 +130,17 @@ class VectorStore:
         pipe.execute()
         return len(chunks)
 
+    def set_attrs(self, element_id: str, attrs: dict) -> bool:
+        """Replace an element's JSON attributes without touching its vector."""
+        try:
+            self.client.execute_command("VSETATTR", self.key, element_id, json.dumps(attrs))
+            return True
+        except redis.ResponseError:
+            return False
+
+    def get_attrs(self, element_id: str) -> dict:
+        return _load_attrs(self.client.execute_command("VGETATTR", self.key, element_id))
+
     def count(self) -> int:
         if not self.index_exists():
             return 0

@@ -426,6 +426,7 @@ def build_ddinter_chunks(drugs: Iterable[str], use_cache: bool = True) -> list[C
             for row in csv.DictReader(f):
                 a = (row.get("Drug_A") or "").strip()
                 b = (row.get("Drug_B") or "").strip()
+                id_a = (row.get("DDInterID_A") or "").strip()
                 level = (row.get("Level") or "Unknown").strip()
                 if not a or not b:
                     continue
@@ -443,11 +444,15 @@ def build_ddinter_chunks(drugs: Iterable[str], use_cache: bool = True) -> list[C
                     f"DDInter 2.0 (a pharmacist-curated interaction database)."
                 )
                 uid = hashlib.sha1(f"ddinter|{pair_key[0]}|{pair_key[1]}".encode()).hexdigest()[:16]
+                # Deep-link to Drug_A's DDInter page, which shows its full
+                # interaction profile (including this partner) — far more useful
+                # than the site home page.
+                url = f"{DDINTER_BASE}/server/drug-detail/{id_a}/" if id_a else DDINTER_BASE
                 chunks.append(
                     Chunk(
                         id=uid, text=text, source="DDInter 2.0",
                         drug_name=la, section_type="drug_interaction",
-                        date=DDINTER_DATE, url=DDINTER_BASE, embedding=[],
+                        date=DDINTER_DATE, url=url, embedding=[],
                     )
                 )
     print(f"  DDInter interaction pairs (both drugs in set): {len(chunks)}")
