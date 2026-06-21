@@ -21,19 +21,23 @@ The physician reviews this report and makes the final prescribing decision.
 ## System Architecture
 
 ```
-── INDEX BUILD (runs once) ──────────────────────────────────────────
+── INDEX BUILD (ingest.py, runs once) ───────────────────────────────
 
-Medical Documents (drug monographs, guidelines, interaction data)
+Three sources (free, citable):
+  • openFDA drug labels      (per-drug safety/dosing)
+  • DDInter 2.0              (severity-rated interaction pairs)
+  • openFDA FAERS            (real-world adverse-event signals)
   ▼
 Chunker
   │  Section-level chunking with metadata
-  │  (source, drug name, section type, date)
+  │  (source, drug name, section type, date, verification URL)
   ▼
-Voyage AI voyage-3-large
-  │  Embed each chunk → high-dimensional vector
+BGE  (BAAI/bge-large-en-v1.5, local, 1024-dim)
+  │  Embed each chunk → vector   (no API cost)
   ▼
-Redis Vector Store
-  │  Store vectors + metadata via Redis Vector Search (HNSW index)
+Redis 8 Vector Set
+  │  Store vectors + JSON attributes (VADD); search with VSIM,
+  │  with server-side attribute FILTER for source/section
 
 ── QUERY (runs per physician request) ───────────────────────────────
 
@@ -47,27 +51,27 @@ FHIR Parser
   │           AllergyIntolerance, Observation resources
   │  Output: structured patient record + data quality flags
   ▼
-Query Builder
-  │  Compose retrieval query: drug name + patient diagnoses + indication
-  ▼
-Voyage AI voyage-3-large
-  │  Embed query → vector
-  ▼
-Redis Vector Search
-  │  Nearest-neighbor search → top-k most relevant chunks
+Source-balanced Retrieval (retrieval.py)
+  │  Multiple targeted BGE-embedded queries with guaranteed quotas:
+  │   • per-pair interaction chunk for EACH current medication
+  │   • proposed drug's label safety profile
+  │   • renal dose-adjustment chunk (if reduced kidney function)
+  │   • proposed drug's FAERS adverse-event signal
+  │   • general fill to the remaining budget
   ▼
 Prompt Assembler
   │  Combine: parsed patient record + retrieved chunks +
   │           proposed medication + physician question
   ▼
 Claude Opus 4.8  ◄──── CONTEXT.md defines behavior here
-  │  Reason, synthesize, flag gaps, apply severity scale
+  │  Reason, synthesize, flag gaps, apply severity scale,
+  │  cite each grounded claim as [chunk N]
   ▼
-Structured Report
+Structured Report  (with clickable citations → source URLs)
   │  Recommendation · Interactions · Contraindications ·
   │  Lab Flags · Monitoring · Alternatives · Uncertainty
   ▼
-Physician Review Interface
+Physician Review Interface (Flask, app.py)
 ```
 
 ---
@@ -77,16 +81,17 @@ Physician Review Interface
 | Layer | Technology | Role |
 |---|---|---|
 | Reasoning engine | Claude Opus 4.8 (`claude-opus-4-8`) | Reads retrieved chunks + patient record, generates structured safety report |
-| Embedding model | Voyage AI `voyage-3-large` | Converts documents and queries into vectors for semantic search |
-| Vector database | Redis (Redis Vector Search) | Stores and searches embeddings via HNSW index; returns top-k relevant chunks |
+| Embedding model | BGE `BAAI/bge-large-en-v1.5` (local, via `sentence-transformers`) | Converts documents and queries into 1024-dim vectors for semantic search — runs locally, no API cost |
+| Vector database | Redis 8 native **vector sets** (`VADD`/`VSIM`/`VGETATTR`) | Stores embeddings + JSON metadata; cosine KNN search with server-side attribute filtering |
+| Knowledge sources | openFDA labels, DDInter 2.0, openFDA FAERS | Free, citable medical knowledge (see Knowledge Base section) |
 | Patient data | FHIR R4 (uploaded `.json`) | Source of structured patient record parsed at query time |
-| Web framework | Python (Flask or FastAPI) | Serves the physician UI and orchestrates the pipeline |
+| Web framework | Flask (`app.py`) | Serves the physician UI and orchestrates the pipeline |
 
 **Why Claude Opus 4.8:** This task requires deep multi-step reasoning over long interleaved documents (drug monographs can be lengthy), reliable handling of complex patient scenarios with multiple comorbidities, and high accuracy on safety-critical output. The model is instructed by `CONTEXT.md` at system-prompt time.
 
-**Why Voyage AI `voyage-3-large`:** Voyage AI's models are optimized specifically for retrieval tasks and measurably outperform general-purpose embedding models on medical and clinical text. Since retrieval quality directly determines whether a dangerous drug interaction gets surfaced, embedding accuracy is not a place to cut corners.
+**Why local BGE embeddings:** `BAAI/bge-large-en-v1.5` is a strong open retrieval model that runs locally via `sentence-transformers`, so there is **no per-embedding API cost** — important when embedding ~20k chunks and re-running ingestion freely. The embedding provider is pluggable (`EMBED_PROVIDER` in `.env`); Voyage AI is also supported if an API key is preferred. Query and document vectors must use the same model, so changing providers requires re-ingesting.
 
-**Why Redis:** Redis Vector Search provides in-memory nearest-neighbor search with very low latency, making the demo feel responsive. Redis Cloud's free tier requires no infrastructure setup, and its Python client (`redis-py`) integrates cleanly with the rest of the pipeline. Redis is a sponsor of this hackathon.
+**Why Redis 8 vector sets:** Redis 8 ships native **vector sets** in core (no separate Redis Stack / RediSearch module needed), so the system runs against a stock local Redis install. `VSIM` gives low-latency cosine KNN, and its `FILTER` expression supports server-side filtering on chunk attributes (e.g. restrict a query to a drug's label-safety sections), which the source-balanced retrieval relies on. Running locally also keeps PHI off third-party infrastructure. Redis is a sponsor of this hackathon.
 
 ---
 
@@ -218,8 +223,8 @@ def parse_fhir_bundle(bundle: dict) -> dict:
 The prompt assembler takes the parsed patient record, retrieved knowledge chunks, proposed medication, and physician question and formats them into the structured input Claude expects. See `CONTEXT.md` for the exact input contract.
 
 Key assembly decisions:
-- Retrieved chunks are ordered by relevance score descending.
-- Each chunk includes its source name, section type, and update date so Claude can surface freshness concerns.
+- Retrieved chunks are ordered by relevance score descending and labeled `[chunk N]` so Claude can cite each grounded claim; the UI turns those citations into clickable links to the source.
+- Each chunk includes its source name, section type, update date, and verification URL (DailyMed for labels, the DDInter drug page for interactions, the FAERS dashboard for adverse events) so Claude can surface freshness concerns and the physician can verify.
 - Data quality flags from the FHIR parser are included in the patient record section so Claude is aware of what is missing.
 - The physician's free-text question appears last, immediately before Claude's response, so it is the most proximal instruction.
 
@@ -259,17 +264,21 @@ The current implementation focuses on demonstrating the core pipeline end-to-end
 |---|---|
 | `README.md` | This file. Project overview, architecture, and implementation guide. |
 | `CONTEXT.md` | System prompt loaded into Claude Opus 4.8. Defines input/output structure, behavioral rules, and clinical role. |
-
-Additional files to be built:
-
-| File | Purpose |
-|---|---|
+| `config.py` | Centralized, typed settings loaded from environment / `.env` (embedding provider, Redis URL, retrieval tuning). |
 | `fhir_parser.py` | Parses FHIR R4 bundles into structured patient records. Handles `Patient`, `MedicationRequest`, `Condition`, `AllergyIntolerance`, `Observation`. |
-| `retrieval.py` | Query embedding + semantic search over the medical knowledge base (top-k chunks). |
+| `embeddings.py` | Embedder interface + implementations: `BGEEmbedder` (default, local), `VoyageEmbedder`, `StubEmbedder`. Selected via `EMBED_PROVIDER`. |
+| `vector_store.py` | Redis 8 vector-set wrapper: upsert (`VADD`), KNN search with attribute `FILTER` (`VSIM`), and in-place attribute updates (`VSETATTR`). |
+| `ingest.py` | Builds the index from all three sources (openFDA labels, DDInter, FAERS); chunks, embeds, and upserts. Reads the drug universe from `data/drug_list.txt`. |
+| `retrieval.py` | Source-balanced multi-query retrieval with per-source quotas (per-pair interactions, label safety, renal dosing, FAERS). |
 | `prompt_assembly.py` | Combines parsed patient record + retrieved chunks + proposed medication + physician question into Claude's expected input format. |
-| `api_client.py` | Anthropic SDK wrapper for calling `claude-opus-4-8`. |
-| `app.py` | Web UI: FHIR file upload, medication input, question field, report display. |
-| `synthetic_patients/` | Sample Synthea-generated FHIR bundles for demo and testing. |
+| `api_client.py` | Anthropic SDK wrapper for calling `claude-opus-4-8`; loads `CONTEXT.md` as the system prompt. |
+| `app.py` | Flask web UI: FHIR upload, medication/question input, rendered report with clickable `[chunk N]` citations + a References & Sources panel. |
+| `run_case.py` | CLI to run a single patient + drug case end-to-end (or `--retrieval-only`) for testing without the web UI. |
+| `data/drug_list.txt` | Curated ~270 commonly-prescribed generic drug names (the index's drug universe). Edit to expand coverage. |
+| `synthetic_patients/` | Sample FHIR R4 bundles for demo and testing (e.g. elderly polypharmacy, CKD metformin contraindication, low-risk control). |
+| `frontend/` | Standalone styled UI mockups (`index.html`, `setup.html`, `report.html`). Not yet wired to the backend — the live UI is served by `app.py`. |
+
+> Generated/large artifacts (`dump.rdb`, `data/cache/`, `data/ddinter/`) are git-ignored and rebuilt by `ingest.py`.
 
 ---
 
@@ -313,7 +322,38 @@ python ingest.py --dry-run
 
 ---
 
-## Quick Start
+## Running It
+
+```bash
+# 0. One-time setup
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # then add ANTHROPIC_API_KEY; defaults: BGE + local Redis
+
+# 1. Start a local Redis 8 (e.g. `brew install redis && redis-server`)
+
+# 2. Build the index from all three sources (~20k chunks; one-time, ~25 min on CPU)
+python ingest.py --recreate
+
+# 3a. Launch the web UI
+python app.py                 # http://127.0.0.1:5001
+
+# 3b. …or run a single case from the CLI
+python run_case.py \
+  --patient synthetic_patients/elderly_polypharmacy.json \
+  --drug ciprofloxacin --dose 500mg --route oral --indication "complicated UTI" \
+  --question "Is ciprofloxacin safe with her warfarin, and what dose given eGFR 34?"
+# add --retrieval-only to inspect retrieved chunks without a (paid) Claude call
+```
+
+Configuration lives in `.env` (see `.env.example`): `ANTHROPIC_API_KEY`,
+`EMBED_PROVIDER` (default `bge`), `REDIS_URL` (default `redis://localhost:6379`),
+and retrieval tuning (`RETRIEVAL_TOP_K`, `RETRIEVAL_PER_PAIR_K`,
+`RETRIEVAL_MAX_CHUNKS`).
+
+---
+
+## Quick Start (library usage)
 
 ```python
 import json
