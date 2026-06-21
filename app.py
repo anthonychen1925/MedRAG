@@ -3,9 +3,15 @@
 A single-file Flask app that orchestrates the pipeline:
   FHIR upload -> parse -> retrieve -> assemble prompt -> Claude -> report.
 
+The UI keeps the dark, glass-panel "bento" aesthetic of the frontend/ mockups
+(index.html, setup.html, report.html) while being fully wired to the backend:
+Claude's markdown report is parsed into sections and rendered as styled cards,
+with the recommendation shown as a status badge and clickable [chunk N] citations
+linking to a References & Sources panel.
+
 Run:
     python app.py
-then open http://127.0.0.1:5000
+then open http://127.0.0.1:5001
 """
 
 from __future__ import annotations
@@ -24,180 +30,380 @@ from retrieval import retrieve_chunks
 
 app = Flask(__name__)
 
-PAGE = """
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MedRAG — Medication Decision Support</title>
-  <style>
-    :root { --bg:#0f1720; --panel:#172230; --ink:#e6edf3; --muted:#9fb0c0;
-            --accent:#3da9fc; --line:#26344a; --warn:#f4b740; --danger:#ff6b6b;
-            --ok:#3ecf8e; }
-    * { box-sizing: border-box; }
-    body { margin:0; font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-           background:var(--bg); color:var(--ink); }
-    header { padding:22px 28px; border-bottom:1px solid var(--line); background:var(--panel); }
-    header h1 { margin:0; font-size:20px; letter-spacing:.2px; }
-    header p { margin:4px 0 0; color:var(--muted); font-size:13px; }
-    .wrap { display:grid; grid-template-columns: 420px 1fr; gap:0; min-height:calc(100vh - 86px); }
-    .form { padding:24px 28px; border-right:1px solid var(--line); }
-    .report { padding:24px 32px; overflow:auto; }
-    label { display:block; font-size:13px; color:var(--muted); margin:16px 0 6px; }
-    input[type=text], textarea, input[type=file] {
-      width:100%; padding:10px 12px; background:#0c1420; color:var(--ink);
-      border:1px solid var(--line); border-radius:8px; font:inherit; }
-    textarea { min-height:90px; resize:vertical; }
-    .row { display:flex; gap:10px; }
-    .row > div { flex:1; }
-    button { margin-top:22px; width:100%; padding:12px; border:0; border-radius:8px;
-      background:var(--accent); color:#04121f; font-weight:700; font-size:15px; cursor:pointer; }
-    button:hover { filter:brightness(1.07); }
-    .hint { font-size:12px; color:var(--muted); margin-top:6px; }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px;
-            padding:20px 24px; margin-bottom:18px; }
-    .report h2 { font-size:15px; color:var(--accent); border-bottom:1px solid var(--line);
-                 padding-bottom:6px; margin-top:22px; }
-    .report h3 { font-size:14px; margin-top:16px; }
-    .status { font-weight:800; padding:10px 14px; border-radius:8px; display:inline-block; }
-    .status.ok { background:rgba(62,207,142,.15); color:var(--ok); }
-    .status.caution { background:rgba(244,183,64,.15); color:var(--warn); }
-    .status.contra { background:rgba(255,107,107,.15); color:var(--danger); }
-    .err { background:rgba(255,107,107,.12); border:1px solid var(--danger);
-           color:#ffd5d5; padding:14px 16px; border-radius:10px; white-space:pre-wrap; }
-    .muted { color:var(--muted); }
-    .pill { display:inline-block; font-size:11px; padding:2px 8px; border:1px solid var(--line);
-            border-radius:999px; color:var(--muted); margin:2px 4px 2px 0; }
-    pre { white-space:pre-wrap; word-wrap:break-word; }
-    code { background:#0c1420; padding:1px 5px; border-radius:4px; }
-    .empty { color:var(--muted); margin-top:40px; text-align:center; }
-    a { color:var(--accent); }
-    .refs { padding-left:22px; margin:0; }
-    .refs li { margin-bottom:14px; padding-top:6px; }
-    .refs li:target { background:rgba(61,169,252,.12); border-radius:6px;
-                      box-shadow:0 0 0 6px rgba(61,169,252,.12); }
-    .refmeta { font-size:13px; }
-    .reflink { display:inline-block; margin-left:8px; font-size:12px; font-weight:600; }
-    .refsnippet { color:var(--muted); font-size:12px; margin-top:4px;
-                  border-left:2px solid var(--line); padding-left:10px; }
-    .cite { color:var(--accent); text-decoration:none; font-weight:600; }
-    .cite:hover { text-decoration:underline; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>MedRAG · Medication Decision Support</h1>
-    <p>Retrieval-augmented safety assessment for prescribing decisions. Decision support only — the final decision rests with the licensed clinician.</p>
-  </header>
-  <div class="wrap">
-    <form class="form" method="post" enctype="multipart/form-data">
-      <label>FHIR R4 patient bundle (.json)</label>
-      <input type="file" name="fhir_file" accept="application/json,.json">
-      <div class="hint">Or load the bundled demo patient (79F, AFib/CKD, polypharmacy).</div>
-      <label><input type="checkbox" name="use_demo" value="1" style="width:auto"> Use demo patient instead of upload</label>
-
-      <label>Proposed medication (generic name)</label>
-      <input type="text" name="drug_name" placeholder="e.g. amiodarone" value="{{ form.drug_name }}">
-
-      <div class="row">
-        <div>
-          <label>Dose</label>
-          <input type="text" name="dose" placeholder="200mg" value="{{ form.dose }}">
-        </div>
-        <div>
-          <label>Route</label>
-          <input type="text" name="route" placeholder="oral" value="{{ form.route }}">
-        </div>
-      </div>
-
-      <label>Indication</label>
-      <input type="text" name="indication" placeholder="e.g. atrial fibrillation rate control" value="{{ form.indication }}">
-
-      <label>Clinical question (optional)</label>
-      <textarea name="question" placeholder="e.g. Any concern combining with her warfarin given the CKD?">{{ form.question }}</textarea>
-
-      <button type="submit">Generate safety report</button>
-      <div class="hint" style="margin-top:14px">
-        Embedder: <span class="pill">{{ embedder }}</span>
-        Model: <span class="pill">{{ model }}</span>
-        Top-k: <span class="pill">{{ top_k }}</span>
-      </div>
-    </form>
-
-    <div class="report">
-      {% if error %}
-        <div class="err">{{ error }}</div>
-      {% elif report_html %}
-        {% if patient_summary %}
-        <div class="card">
-          <strong>Patient</strong> · {{ patient_summary }}
-          <div style="margin-top:8px">
-          {% for f in flags %}<span class="pill">⚠ {{ f }}</span>{% endfor %}
-          </div>
-        </div>
-        {% endif %}
-        <div class="card">
-          <div class="muted" style="margin-bottom:8px">Retrieved {{ n_chunks }} knowledge chunk(s)
-            {% for s in sources %}<span class="pill">{{ s }}</span>{% endfor %}
-          </div>
-          {{ report_html|safe }}
-        </div>
-        {% if references %}
-        <div class="card">
-          <h2 style="margin-top:0">References &amp; Sources</h2>
-          <div class="muted" style="font-size:12px;margin-bottom:10px">
-            Each citation in the report (e.g. <code>[chunk 1]</code>) links to its entry below.
-            Click “View source label” to verify against the original FDA label on DailyMed.
-          </div>
-          <ol class="refs">
-            {% for r in references %}
-            <li id="ref-{{ r.n }}">
-              <span class="refmeta"><strong>{{ r.drug }}</strong> · {{ r.section }} · {{ r.date or "date n/a" }} · <span class="muted">{{ r.source }}</span></span>
-              {% if r.url %}<a class="reflink" href="{{ r.url }}" target="_blank" rel="noopener">View source label ↗</a>{% else %}<span class="muted">(no source link)</span>{% endif %}
-              <div class="refsnippet">{{ r.snippet }}</div>
-            </li>
-            {% endfor %}
-          </ol>
-        </div>
-        {% endif %}
-      {% else %}
-        <div class="empty">
-          <p>Upload a FHIR bundle (or use the demo patient), enter a proposed medication, and generate a report.</p>
-        </div>
-      {% endif %}
-    </div>
-  </div>
-</body>
-</html>
-"""
-
 DEMO_PATH = "synthetic_patients/elderly_polypharmacy.json"
 
+# Shared <head>: Tailwind config + theme tokens + report-body styling. Mirrors
+# the design language of the frontend/ mockups.
+HEAD = """
+<head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>MedRAG — Medication Decision Support</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&family=Inter:wght@400;600&family=Geist:wght@500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet">
+<script>
+  tailwind.config = {
+    darkMode: "class",
+    theme: { extend: {
+      colors: {
+        "error-container": "#93000a", "surface-container-low": "#0e1d25",
+        "clinical-teal": "#00E5BC", "tertiary": "#d1bcff",
+        "secondary-container": "#00f1fe", "background": "#06151d",
+        "surface-variant": "#28373f", "on-error-container": "#ffdad6",
+        "primary-fixed-dim": "#aec6ff", "inverse-primary": "#0059c5",
+        "on-primary-container": "#edf0ff", "outline": "#8c90a0",
+        "on-background": "#d5e5f0", "surface-bright": "#2c3b44",
+        "on-surface": "#d5e5f0", "tertiary-fixed-dim": "#d1bcff",
+        "surface": "#06151d", "surface-container-high": "#1d2c34",
+        "inverse-surface": "#d5e5f0", "secondary": "#ddfcff",
+        "on-surface-variant": "#c2c6d6", "primary-fixed": "#d8e2ff",
+        "surface-glass": "rgba(28, 43, 51, 0.6)", "surface-container": "#122129",
+        "surface-container-highest": "#28373f", "secondary-fixed-dim": "#00dbe7",
+        "outline-variant": "#424754", "tertiary-container": "#803fff",
+        "deep-indigo": "#0A0F1E", "surface-dim": "#06151d", "on-primary": "#002e6b",
+        "error": "#ffb4ab", "tertiary-fixed": "#e9ddff", "primary": "#aec6ff",
+        "primary-container": "#0668e1", "surface-tint": "#aec6ff",
+        "secondary-fixed": "#74f5ff", "surface-container-lowest": "#021017"
+      },
+      borderRadius: { "DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px" },
+      spacing: { "margin-desktop": "64px", "margin-mobile": "20px", "container-max": "1440px", "gutter": "24px", "base": "8px" },
+      fontFamily: {
+        "display-lg": ["Hanken Grotesk"], "headline-lg-mobile": ["Hanken Grotesk"],
+        "body-lg": ["Inter"], "title-md": ["Inter"], "label-sm": ["Geist"],
+        "body-md": ["Inter"], "headline-lg": ["Hanken Grotesk"]
+      },
+      fontSize: {
+        "display-lg": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+        "headline-lg-mobile": ["28px", {"lineHeight": "36px", "fontWeight": "600"}],
+        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+        "title-md": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
+        "label-sm": ["12px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "500"}],
+        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+        "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}]
+      }
+    }}
+  }
+</script>
+<style>
+  body {
+    background-color: #0A0F1E; color: #d5e5f0;
+    background-image:
+      radial-gradient(circle at 15% 50%, rgba(0, 242, 255, 0.05), transparent 25%),
+      radial-gradient(circle at 85% 30%, rgba(128, 63, 255, 0.05), transparent 25%);
+    background-attachment: fixed; min-height: 100vh;
+  }
+  .glass-panel {
+    background-color: rgba(28, 43, 51, 0.6);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+  .glow-hover:hover { box-shadow: 0 0 20px rgba(0, 242, 255, 0.15); }
+  .glow-focus:focus-within { box-shadow: 0 0 20px 0 rgba(0, 242, 255, 0.15); border-bottom-color: #00E5BC; }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  /* Rendered Claude markdown inside report cards */
+  .report-body p { margin: 0.5rem 0; color: #c2c6d6; }
+  .report-body h2 { font-size: 18px; font-weight: 600; color: #00E5BC; margin: 1rem 0 0.4rem; }
+  .report-body h3 { font-size: 15px; font-weight: 600; color: #aec6ff; margin: 0.8rem 0 0.3rem; }
+  .report-body ul { list-style: disc; padding-left: 1.3rem; margin: 0.4rem 0; }
+  .report-body li { margin: 0.3rem 0; color: #c2c6d6; }
+  .report-body strong { color: #eef4f8; font-weight: 600; }
+  .report-body code { background: rgba(0,0,0,0.35); padding: 1px 6px; border-radius: 5px; font-size: 0.85em; }
+  .report-body a.cite { color: #00E5BC; font-weight: 600; text-decoration: none; }
+  .report-body a.cite:hover { text-decoration: underline; }
+  .report-body br { display: none; }
+  .ref-item:target { box-shadow: 0 0 0 2px rgba(0,229,188,0.6); border-radius: 0.5rem; }
+</style>
+</head>
+"""
 
-def _embedder_label() -> str:
-    if settings.use_stub_embedder:
-        return "stub"
-    if settings.embed_provider == "voyage":
-        return settings.voyage_model if settings.voyage_api_key else "stub (no Voyage key)"
-    return settings.bge_model
+NAV = """
+<nav class="glass-panel backdrop-blur-xl border-b border-white/10 flex justify-between items-center px-margin-mobile md:px-margin-desktop h-20 w-full z-50 sticky top-0">
+  <div class="flex items-center gap-4">
+    <span class="material-symbols-outlined text-clinical-teal text-3xl" style="font-variation-settings: 'FILL' 1;">medical_services</span>
+    <a href="/" class="font-display-lg text-headline-lg-mobile md:text-headline-lg font-bold text-primary tracking-tight">MedRAG</a>
+  </div>
+  <div class="hidden md:flex gap-8">
+    <span class="text-on-surface-variant font-medium">Medication Decision Support</span>
+  </div>
+  <div>
+    <span class="font-label-sm text-label-sm text-clinical-teal uppercase tracking-widest border border-clinical-teal/30 px-3 py-1 rounded-full flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-clinical-teal animate-pulse"></span> Engine Ready
+    </span>
+  </div>
+</nav>
+"""
+
+SETUP_PAGE = """
+<!DOCTYPE html><html class="dark" lang="en">
+""" + HEAD + """
+<body class="antialiased overflow-x-hidden flex flex-col min-h-screen">
+""" + NAV + """
+<main class="flex-grow w-full max-w-container-max mx-auto px-margin-mobile md:px-margin-desktop py-12 flex flex-col gap-10">
+
+  <section class="flex flex-col gap-2">
+    <h1 class="font-display-lg text-display-lg text-on-surface">Analysis Setup</h1>
+    <p class="font-body-lg text-body-lg text-on-surface-variant max-w-2xl">Initialize the reasoning engine with patient context, the proposed intervention, and your clinical query. The final prescribing decision rests with the licensed clinician.</p>
+  </section>
+
+  {% if error %}
+  <div class="glass-panel rounded-xl p-5 border-l-4 border-error flex items-start gap-3">
+    <span class="material-symbols-outlined text-error">error</span>
+    <pre class="font-body-md text-body-md text-on-error-container whitespace-pre-wrap">{{ error }}</pre>
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+    <div class="col-span-1 md:col-span-8 flex flex-col gap-gutter">
+
+      <!-- FHIR upload -->
+      <div class="glass-panel rounded-xl p-gutter flex flex-col gap-5">
+        <h2 class="font-title-md text-title-md text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-clinical-teal">upload_file</span> Patient Context (FHIR R4)
+        </h2>
+        <label id="drop" class="border-2 border-dashed border-outline-variant rounded-lg p-8 flex flex-col items-center justify-center gap-3 bg-surface-container-low/50 hover:bg-surface-container-low/80 hover:border-clinical-teal/50 transition-colors cursor-pointer text-center">
+          <span class="material-symbols-outlined text-4xl text-outline">cloud_upload</span>
+          <span id="fname" class="font-title-md text-title-md text-on-surface">Click to upload a FHIR R4 .json bundle</span>
+          <span class="font-label-sm text-label-sm text-outline uppercase tracking-widest">Supports .json</span>
+          <input id="fhir_file" type="file" name="fhir_file" accept="application/json,.json" class="hidden">
+        </label>
+        <label class="flex items-center gap-3 text-on-surface-variant font-body-md cursor-pointer">
+          <input type="checkbox" name="use_demo" value="1" class="rounded bg-surface-container-low border-outline-variant text-clinical-teal focus:ring-clinical-teal">
+          Use bundled demo patient instead (79F, AFib/CKD, polypharmacy)
+        </label>
+      </div>
+
+      <!-- Proposed intervention -->
+      <div class="glass-panel rounded-xl p-gutter flex flex-col gap-5">
+        <h2 class="font-title-md text-title-md text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary">medication</span> Proposed Intervention
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+          {{ field("Generic Name", "drug_name", "e.g. amiodarone", form.drug_name) }}
+          {{ field("Dose & Frequency", "dose", "e.g. 200mg daily", form.dose) }}
+          {{ field("Route", "route", "e.g. oral", form.route) }}
+          {{ field("Primary Indication", "indication", "e.g. atrial fibrillation", form.indication) }}
+        </div>
+      </div>
+
+      <!-- Clinical query -->
+      <div class="glass-panel rounded-xl p-gutter flex flex-col gap-5">
+        <h2 class="font-title-md text-title-md text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-tertiary-container">help_clinic</span> Clinical Query
+        </h2>
+        <div class="flex flex-col glow-focus transition-all border-b-2 border-outline-variant bg-surface-container-low/50 rounded-t-lg h-36">
+          <textarea name="question" class="w-full h-full bg-transparent border-none text-on-surface font-body-md focus:ring-0 p-4 resize-none placeholder:text-outline-variant" placeholder="e.g. Any concern combining with her warfarin given the CKD?">{{ form.question }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- Action column -->
+    <div class="col-span-1 md:col-span-4 flex flex-col gap-gutter">
+      <div class="glass-panel rounded-xl p-gutter flex flex-col gap-6 sticky top-28">
+        <h3 class="font-title-md text-title-md text-on-surface border-b border-white/5 pb-4">Run Analysis</h3>
+        <p class="font-body-md text-body-md text-on-surface-variant">Provide a patient bundle (or demo) and at least a generic drug name, then start the analysis.</p>
+        <button type="submit" class="w-full bg-primary-container text-white py-4 px-6 rounded-lg font-title-md text-title-md flex items-center justify-center gap-2 hover:bg-inverse-primary transition-colors glow-hover">
+          <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 1;">rocket_launch</span> Start Analysis
+        </button>
+        <div class="flex flex-col gap-2 pt-2 border-t border-white/5 text-on-surface-variant">
+          <div class="flex justify-between font-label-sm text-label-sm uppercase tracking-widest"><span class="text-outline">Embedder</span><span>{{ embedder }}</span></div>
+          <div class="flex justify-between font-label-sm text-label-sm uppercase tracking-widest"><span class="text-outline">Model</span><span>{{ model }}</span></div>
+          <div class="flex justify-between font-label-sm text-label-sm uppercase tracking-widest"><span class="text-outline">Max chunks</span><span>{{ top_k }}</span></div>
+        </div>
+      </div>
+    </div>
+  </form>
+</main>
+<script>
+  const inp = document.getElementById('fhir_file');
+  inp.addEventListener('change', () => {
+    const f = inp.files[0];
+    document.getElementById('fname').textContent = f ? f.name : 'Click to upload a FHIR R4 .json bundle';
+  });
+</script>
+</body></html>
+"""
+
+REPORT_PAGE = """
+<!DOCTYPE html><html class="dark" lang="en">
+""" + HEAD + """
+<body class="antialiased overflow-x-hidden flex flex-col min-h-screen">
+""" + NAV + """
+<main class="flex-grow px-margin-mobile md:px-margin-desktop py-12 flex flex-col gap-10 max-w-container-max mx-auto w-full">
+
+  <!-- Header & status -->
+  <header class="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
+    <div>
+      <h1 class="font-display-lg text-display-lg text-on-surface mb-2">Clinical Safety Report</h1>
+      <p class="font-body-lg text-body-lg text-on-surface-variant">{{ patient_summary }}</p>
+      <p class="font-label-sm text-label-sm text-outline uppercase tracking-widest mt-2">
+        Retrieved {{ n_chunks }} knowledge chunks · {{ sources|join(" · ") }}
+      </p>
+    </div>
+    <div class="glass-panel rounded-xl px-6 py-4 border-l-4 flex items-center gap-4 glow-hover transition-all" style="border-color: {{ status.hex }};">
+      <span class="material-symbols-outlined text-4xl" style="font-variation-settings:'FILL' 1; color: {{ status.hex }};">{{ status.icon }}</span>
+      <div>
+        <span class="font-label-sm text-label-sm text-on-surface-variant uppercase tracking-widest block mb-1">Recommendation</span>
+        <span class="font-headline-lg text-title-md" style="color: {{ status.hex }};">{{ status.label }}</span>
+      </div>
+    </div>
+  </header>
+
+  {% if flags %}
+  <div class="flex flex-wrap gap-2">
+    {% for f in flags %}
+    <span class="inline-flex items-center gap-1 bg-surface-container/60 border border-white/10 rounded-full px-3 py-1 font-label-sm text-label-sm text-on-surface-variant">
+      <span class="material-symbols-outlined text-base text-orange-400">flag</span>{{ f }}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Bento grid of report sections -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-gutter">
+    {% for s in sections %}
+    <section class="{{ s.span }} glass-panel rounded-xl p-6 flex flex-col gap-3 glow-hover transition-all">
+      <div class="flex items-center gap-3 border-b border-white/10 pb-3">
+        <span class="material-symbols-outlined" style="color: {{ s.hex }};">{{ s.icon }}</span>
+        <h2 class="font-title-md text-title-md text-on-surface">{{ s.title }}</h2>
+      </div>
+      <div class="report-body font-body-md text-body-md">{{ s.body|safe }}</div>
+    </section>
+    {% endfor %}
+
+    <!-- References -->
+    {% if references %}
+    <section class="md:col-span-2 glass-panel rounded-xl p-6 flex flex-col gap-3">
+      <div class="flex items-center gap-3 border-b border-white/10 pb-3">
+        <span class="material-symbols-outlined text-secondary-fixed-dim">menu_book</span>
+        <h2 class="font-title-md text-title-md text-on-surface">References &amp; Sources</h2>
+      </div>
+      <p class="font-body-md text-on-surface-variant text-sm">Each <code class="bg-black/30 px-1 rounded">[chunk N]</code> citation links to its entry below. Open the source to verify against the original.</p>
+      <ol class="flex flex-col gap-3 mt-1">
+        {% for r in references %}
+        <li id="ref-{{ r.n }}" class="ref-item bg-surface-container/50 rounded-lg p-4 border border-white/5">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-label-sm text-label-sm text-clinical-teal">[{{ r.n }}]</span>
+            <strong class="text-on-surface">{{ r.drug }}</strong>
+            <span class="text-on-surface-variant">· {{ r.section }} · {{ r.date or "date n/a" }}</span>
+            <span class="font-label-sm text-label-sm uppercase tracking-widest text-outline border border-white/10 rounded-full px-2 py-0.5">{{ r.source }}</span>
+            {% if r.url %}<a href="{{ r.url }}" target="_blank" rel="noopener" class="text-clinical-teal text-sm font-semibold hover:underline ml-auto">Open source ↗</a>{% endif %}
+          </div>
+          <p class="text-on-surface-variant text-sm mt-2 border-l-2 border-white/10 pl-3">{{ r.snippet }}</p>
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+  </div>
+
+  {% if disclaimer %}
+  <p class="font-body-md text-on-surface-variant text-sm italic text-center border-t border-white/5 pt-6">{{ disclaimer }}</p>
+  {% endif %}
+
+  <div class="flex justify-center">
+    <a href="/" class="bg-surface-container text-on-surface border border-white/10 py-3 px-8 rounded-full font-title-md text-title-md flex items-center gap-2 hover:bg-surface-container-high transition-colors">
+      <span class="material-symbols-outlined">refresh</span> New Analysis
+    </a>
+  </div>
+</main>
+<footer class="bg-surface-container-lowest border-t border-white/5 flex justify-center py-base px-margin-mobile md:px-margin-desktop w-full mt-8">
+  <div class="font-label-sm text-label-sm uppercase tracking-widest text-primary py-4">© 2026 MedRAG · Decision support only</div>
+</footer>
+</body></html>
+"""
+
+# Jinja macro for a styled labeled input, used in the setup form.
+FIELD_MACRO = """
+{% macro field(label, name, placeholder, value) %}
+<div class="flex flex-col glow-focus transition-all border-b-2 border-outline-variant bg-surface-container-low/50 rounded-t-lg">
+  <label class="font-label-sm text-label-sm text-outline px-4 pt-3">{{ label }}</label>
+  <input class="w-full bg-transparent border-none text-on-surface font-body-md focus:ring-0 px-4 pb-3 placeholder:text-outline-variant" placeholder="{{ placeholder }}" type="text" name="{{ name }}" value="{{ value }}">
+</div>
+{% endmacro %}
+"""
 
 
-def _status_class(report: str) -> str:
-    head = report[:400].lower()
+# ---------------------------------------------------------------------------
+# Report parsing / rendering helpers
+# ---------------------------------------------------------------------------
+
+# (keyword match, Material Symbol, accent hex). First match wins.
+_SECTION_META = [
+    ("recommendation", "summarize", "#aec6ff"),
+    ("interaction", "medication", "#00E5BC"),
+    ("contraindication", "block", "#ffb4ab"),
+    ("precaution", "block", "#ffb4ab"),
+    ("lab", "science", "#00dbe7"),
+    ("monitoring", "monitor_heart", "#aec6ff"),
+    ("alternative", "alt_route", "#d1bcff"),
+    ("knowledge", "psychology_alt", "#d1bcff"),
+    ("uncertainty", "psychology_alt", "#d1bcff"),
+]
+_WIDE_KEYWORDS = ("recommendation", "interaction", "knowledge", "uncertainty")
+
+
+def _section_style(title: str) -> tuple[str, str, str]:
+    t = title.lower()
+    icon, hexc = "article", "#c2c6d6"
+    for key, ic, hx in _SECTION_META:
+        if key in t:
+            icon, hexc = ic, hx
+            break
+    span = "md:col-span-2" if any(k in t for k in _WIDE_KEYWORDS) else "md:col-span-1"
+    return icon, hexc, span
+
+
+def detect_status(report: str) -> dict:
+    head = report[:600].lower()
     if "contraindicated" in head or "not recommended" in head:
-        return "contra"
+        return {"label": "Contraindicated / Not Recommended", "hex": "#ffb4ab", "icon": "dangerous"}
     if "proceed with caution" in head:
-        return "caution"
+        return {"label": "Proceed with Caution", "hex": "#f4b740", "icon": "warning"}
     if "safe to prescribe" in head:
-        return "ok"
-    return ""
+        return {"label": "Safe to Prescribe", "hex": "#00E5BC", "icon": "check_circle"}
+    return {"label": "Assessment", "hex": "#aec6ff", "icon": "summarize"}
+
+
+def split_report_sections(report: str) -> tuple[list[tuple[str, str]], str]:
+    """Split the markdown report into (title, body) sections by ##/### headings.
+
+    Returns (sections, disclaimer) where disclaimer is the trailing closing line.
+    """
+    sections: list[tuple[str, list[str]]] = []
+    cur_title: str | None = None
+    cur_body: list[str] = []
+    for ln in report.split("\n"):
+        m = re.match(r"^#{1,3}\s+(.*\S)\s*$", ln.strip())
+        if m:
+            if cur_title is not None:
+                sections.append((cur_title, cur_body))
+            cur_title = re.sub(r"^\d+\.\s*", "", m.group(1)).strip()
+            cur_body = []
+        elif cur_title is not None:
+            cur_body.append(ln)
+    if cur_title is not None:
+        sections.append((cur_title, cur_body))
+
+    # Pull a trailing disclaimer line (the mandated closing sentence) out of the
+    # last section body so it can render as a footer note.
+    disclaimer = ""
+    if sections:
+        title, body = sections[-1]
+        kept: list[str] = []
+        for ln in body:
+            if "final prescribing decision rests" in ln.lower():
+                disclaimer = re.sub(r"^[*_\s>-]+|[*_\s]+$", "", ln).strip()
+            else:
+                kept.append(ln)
+        sections[-1] = (title, kept)
+
+    return [(t, "\n".join(b).strip()) for t, b in sections], disclaimer
 
 
 def markdown_to_html(text: str) -> str:
-    """Minimal, safe markdown rendering for the report (no external deps)."""
+    """Minimal, safe markdown rendering for a report section (no external deps)."""
     esc = html.escape(text)
-    lines = esc.split("\n")
     out: list[str] = []
     in_list = False
 
@@ -207,8 +413,7 @@ def markdown_to_html(text: str) -> str:
             out.append("</ul>")
             in_list = False
 
-    status_cls = _status_class(text)
-    for ln in lines:
+    for ln in esc.split("\n"):
         s = ln.rstrip()
         if re.match(r"^#{3}\s+", s):
             close_list()
@@ -227,18 +432,11 @@ def markdown_to_html(text: str) -> str:
             close_list(); out.append("<br>")
         else:
             close_list(); out.append(f"<p>{s}</p>")
-
     close_list()
+
     rendered = "\n".join(out)
     rendered = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered)
     rendered = re.sub(r"`(.+?)`", r"<code>\1</code>", rendered)
-    # Highlight the leading status line if present.
-    if status_cls:
-        rendered = re.sub(
-            r"<strong>(Safe to Prescribe|Proceed with Caution|Contraindicated[^<]*)</strong>",
-            rf'<span class="status {status_cls}">\1</span>',
-            rendered, count=1,
-        )
     return rendered
 
 
@@ -249,13 +447,7 @@ _CITATION_RE = re.compile(
 
 
 def linkify_citations(report_html: str, n_refs: int) -> str:
-    """Turn the model's chunk citations into anchor links.
-
-    Handles both bracketed (``[chunk 1]``, ``[chunks 1, 5]``) and bare
-    (``chunk 1``, ``chunks 2 and 7``) forms. Each cited number links to the
-    matching entry in the References panel (``#ref-N``) so a physician can jump
-    straight to the source.
-    """
+    """Turn the model's chunk citations into anchor links to the References panel."""
     def repl(match: "re.Match") -> str:
         open_b = match.group(1) or ""
         word = match.group(2)
@@ -272,11 +464,20 @@ def linkify_citations(report_html: str, n_refs: int) -> str:
     return _CITATION_RE.sub(repl, report_html)
 
 
+def build_sections(report: str, n_refs: int) -> tuple[list[dict], str]:
+    raw_sections, disclaimer = split_report_sections(report)
+    sections: list[dict] = []
+    for title, body in raw_sections:
+        icon, hexc, span = _section_style(title)
+        body_html = linkify_citations(markdown_to_html(body), n_refs)
+        sections.append({"title": title, "body": body_html, "icon": icon, "hex": hexc, "span": span})
+    return sections, disclaimer
+
+
 def build_references(chunks) -> list[dict]:
     refs = []
     for i, c in enumerate(chunks, start=1):
         text = getattr(c, "text", "")
-        # Strip the leading "[drug — section] " tag we add at ingest time.
         snippet = re.sub(r"^\[[^\]]+\]\s*", "", text)[:240]
         refs.append({
             "n": i,
@@ -290,6 +491,14 @@ def build_references(chunks) -> list[dict]:
     return refs
 
 
+def _embedder_label() -> str:
+    if settings.use_stub_embedder:
+        return "stub"
+    if settings.embed_provider == "voyage":
+        return settings.voyage_model if settings.voyage_api_key else "stub (no Voyage key)"
+    return settings.bge_model
+
+
 def _patient_summary(record: dict) -> str:
     d = record.get("demographics", {})
     dx = ", ".join(x["name"] for x in record.get("diagnoses", [])[:4] if x.get("name"))
@@ -300,16 +509,14 @@ def _patient_summary(record: dict) -> str:
 @app.route("/", methods=["GET", "POST"])
 def index():
     form = {k: "" for k in ("drug_name", "dose", "route", "indication", "question")}
-    ctx = {
-        "form": form, "error": None, "report_html": None,
+    meta = {
         "embedder": _embedder_label(),
-        "model": settings.anthropic_model, "top_k": settings.retrieval_top_k,
-        "patient_summary": None, "flags": [], "n_chunks": 0, "sources": [],
-        "references": [],
+        "model": settings.anthropic_model,
+        "top_k": settings.retrieval_max_chunks,
     }
 
     if request.method == "GET":
-        return render_template_string(PAGE, **ctx)
+        return render_template_string(FIELD_MACRO + SETUP_PAGE, form=form, error=None, **meta)
 
     for k in form:
         form[k] = request.form.get(k, "").strip()
@@ -336,12 +543,15 @@ def index():
         chunks = retrieve_chunks(form["drug_name"], record, indication=form["indication"])
         prompt = build_prompt(record, proposed, chunks, form["question"])
 
-        # Importing here so the page still loads if anthropic isn't configured.
         from api_client import generate_report
         report = generate_report(prompt)
 
-        ctx.update(
-            report_html=linkify_citations(markdown_to_html(report), len(chunks)),
+        sections, disclaimer = build_sections(report, len(chunks))
+        return render_template_string(
+            REPORT_PAGE,
+            status=detect_status(report),
+            sections=sections,
+            disclaimer=disclaimer,
             patient_summary=_patient_summary(record),
             flags=record.get("data_quality_flags", []),
             n_chunks=len(chunks),
@@ -349,9 +559,8 @@ def index():
             references=build_references(chunks),
         )
     except Exception as exc:  # surface a helpful message instead of a 500
-        ctx["error"] = f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc(limit=2)}"
-
-    return render_template_string(PAGE, **ctx)
+        error = f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc(limit=2)}"
+        return render_template_string(FIELD_MACRO + SETUP_PAGE, form=form, error=error, **meta)
 
 
 if __name__ == "__main__":
