@@ -273,6 +273,46 @@ Additional files to be built:
 
 ---
 
+## Knowledge Base & Data Sources
+
+The vector index is built by `ingest.py` from three free, citable sources. Every
+chunk records its `source`, `section_type`, `date`, and a verification `url`, so
+the report can attribute each grounded claim back to a primary source.
+
+| Source | What it provides | `section_type`(s) | Citation target | License |
+|---|---|---|---|---|
+| **openFDA Drug Label** | FDA structured product labeling — contraindications, warnings, interactions, dosing, use in specific populations, renal/hepatic adjustments | `boxed_warning`, `contraindications`, `warnings_and_cautions`, `drug_interactions`, `dosage_and_administration`, `use_in_specific_populations`, `renal_impairment`, `hepatic_impairment`, ... | DailyMed label page | Public domain |
+| **DDInter 2.0** | Pharmacist-curated, **severity-rated** drug–drug interaction pairs (Major / Moderate / Minor) | `drug_interaction` | ddinter2.scbdd.com | CC BY-NC-SA 4.0 (non-commercial) |
+| **openFDA FAERS** | Most-reported real-world adverse events per drug (spontaneous reports; signal only, not causation) | `adverse_event_reports` | openFDA FAERS dashboard | Public domain |
+
+The drug universe is defined in `data/drug_list.txt` (~270 commonly-prescribed
+generics; edit this file to add or remove drugs). DDInter interaction chunks are
+created only for pairs where **both** drugs are in this set, keeping the index
+relevant and bounded.
+
+### Ingestion commands
+
+```bash
+# Build the full index from all three sources (drops & rebuilds)
+python ingest.py --recreate
+
+# A subset of drugs
+python ingest.py --drugs warfarin amiodarone digoxin --recreate
+
+# Labels only (skip interactions / adverse events)
+python ingest.py --no-ddinter --no-faers --recreate
+
+# Fetch + chunk + embed without writing to Redis (sanity check)
+python ingest.py --dry-run
+```
+
+> **Note on licensing:** DDInter is CC BY-NC-SA 4.0 (non-commercial use with
+> attribution) — appropriate for this proof-of-concept, but commercial
+> deployment would require a properly licensed interaction source (e.g.
+> DrugBank, Lexicomp, Micromedex). openFDA data is U.S. public domain.
+
+---
+
 ## Quick Start
 
 ```python

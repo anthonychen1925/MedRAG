@@ -144,6 +144,8 @@ class VectorStore:
         query_vector: list[float],
         k: int = 8,
         drug_name: Optional[str] = None,
+        source: Optional[str] = None,
+        section_types: Optional[list[str]] = None,
     ) -> list[SearchHit]:
         if not self.index_exists():
             return []
@@ -152,9 +154,16 @@ class VectorStore:
             "VSIM", self.key, "FP32", self._vector_bytes(query_vector),
             "WITHSCORES", "COUNT", k,
         ]
+        clauses: list[str] = []
         if drug_name:
-            safe = drug_name.replace('"', '\\"')
-            args += ["FILTER", f'.drug_name == "{safe}"']
+            clauses.append(f'.drug_name == "{drug_name.replace(chr(34), "")}"')
+        if source:
+            clauses.append(f'.source == "{source.replace(chr(34), "")}"')
+        if section_types:
+            quoted = ", ".join(f'"{s.replace(chr(34), "")}"' for s in section_types)
+            clauses.append(f".section_type in [{quoted}]")
+        if clauses:
+            args += ["FILTER", " && ".join(clauses)]
 
         raw = self.client.execute_command(*args)
         pairs = _parse_withscores(raw)

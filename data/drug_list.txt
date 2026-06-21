@@ -1,0 +1,297 @@
+# MedRAG drug list — commonly prescribed generic drugs (one per line).
+# Lines starting with '#' and blank lines are ignored.
+# Names are base generic ingredient names; ingest.py selects the cleanest
+# single-ingredient openFDA label for each.
+
+# --- Cardiovascular ---
+lisinopril
+enalapril
+ramipril
+losartan
+valsartan
+olmesartan
+amlodipine
+nifedipine
+diltiazem
+verapamil
+metoprolol
+atenolol
+carvedilol
+bisoprolol
+propranolol
+labetalol
+hydrochlorothiazide
+chlorthalidone
+furosemide
+torsemide
+bumetanide
+spironolactone
+eplerenone
+triamterene
+clonidine
+hydralazine
+isosorbide mononitrate
+isosorbide dinitrate
+nitroglycerin
+digoxin
+amiodarone
+sotalol
+dronedarone
+flecainide
+dofetilide
+ranolazine
+ivabradine
+atorvastatin
+rosuvastatin
+simvastatin
+pravastatin
+lovastatin
+ezetimibe
+fenofibrate
+gemfibrozil
+warfarin
+apixaban
+rivaroxaban
+dabigatran
+edoxaban
+clopidogrel
+ticagrelor
+prasugrel
+aspirin
+cilostazol
+sacubitril
+
+# --- Diabetes / endocrine ---
+metformin
+glipizide
+glimepiride
+glyburide
+pioglitazone
+sitagliptin
+linagliptin
+saxagliptin
+empagliflozin
+dapagliflozin
+canagliflozin
+liraglutide
+semaglutide
+dulaglutide
+insulin glargine
+insulin lispro
+insulin aspart
+insulin detemir
+insulin degludec
+levothyroxine
+liothyronine
+methimazole
+propylthiouracil
+prednisone
+prednisolone
+methylprednisolone
+dexamethasone
+hydrocortisone
+fludrocortisone
+estradiol
+testosterone
+finasteride
+dutasteride
+tamsulosin
+alfuzosin
+sildenafil
+tadalafil
+
+# --- Anti-infectives ---
+amoxicillin
+ampicillin
+amoxicillin and clavulanate
+cephalexin
+cefuroxime
+cefdinir
+ceftriaxone
+azithromycin
+clarithromycin
+erythromycin
+doxycycline
+minocycline
+tetracycline
+ciprofloxacin
+levofloxacin
+moxifloxacin
+trimethoprim and sulfamethoxazole
+nitrofurantoin
+metronidazole
+clindamycin
+vancomycin
+linezolid
+fluconazole
+itraconazole
+ketoconazole
+terbinafine
+nystatin
+acyclovir
+valacyclovir
+oseltamivir
+isoniazid
+rifampin
+
+# --- Respiratory / allergy ---
+albuterol
+levalbuterol
+ipratropium
+tiotropium
+salmeterol
+formoterol
+fluticasone
+budesonide
+mometasone
+montelukast
+theophylline
+cetirizine
+loratadine
+fexofenadine
+diphenhydramine
+hydroxyzine
+guaifenesin
+dextromethorphan
+pseudoephedrine
+
+# --- GI ---
+omeprazole
+esomeprazole
+pantoprazole
+lansoprazole
+rabeprazole
+famotidine
+ranitidine
+sucralfate
+ondansetron
+promethazine
+metoclopramide
+prochlorperazine
+dicyclomine
+loperamide
+polyethylene glycol
+docusate
+senna
+bisacodyl
+lactulose
+mesalamine
+
+# --- Neuro / psych ---
+gabapentin
+pregabalin
+levetiracetam
+lamotrigine
+valproic acid
+carbamazepine
+oxcarbazepine
+phenytoin
+topiramate
+lacosamide
+sertraline
+fluoxetine
+paroxetine
+citalopram
+escitalopram
+venlafaxine
+desvenlafaxine
+duloxetine
+bupropion
+mirtazapine
+trazodone
+amitriptyline
+nortriptyline
+fluvoxamine
+vortioxetine
+buspirone
+alprazolam
+lorazepam
+clonazepam
+diazepam
+temazepam
+zolpidem
+eszopiclone
+quetiapine
+risperidone
+olanzapine
+aripiprazole
+ziprasidone
+haloperidol
+lithium carbonate
+lurasidone
+clozapine
+donepezil
+memantine
+rivastigmine
+galantamine
+carbidopa and levodopa
+ropinirole
+pramipexole
+amantadine
+benztropine
+sumatriptan
+rizatriptan
+topiramate
+methylphenidate
+amphetamine and dextroamphetamine
+atomoxetine
+modafinil
+
+# --- Pain / inflammation ---
+ibuprofen
+naproxen
+meloxicam
+celecoxib
+diclofenac
+indomethacin
+ketorolac
+acetaminophen
+tramadol
+hydrocodone and acetaminophen
+oxycodone
+morphine
+hydromorphone
+fentanyl
+codeine
+buprenorphine
+methadone
+gabapentin
+cyclobenzaprine
+tizanidine
+baclofen
+methocarbamol
+allopurinol
+febuxostat
+colchicine
+prednisone
+
+# --- Anticoagulation / heme ---
+enoxaparin
+heparin
+ferrous sulfate
+cyanocobalamin
+folic acid
+
+# --- Other common ---
+potassium chloride
+magnesium oxide
+calcium carbonate
+cholecalciferol
+ergocalciferol
+melatonin
+ondansetron
+phenazopyridine
+oxybutynin
+solifenacin
+mirabegron
+raloxifene
+alendronate
+risedronate
+denosumab
+hydroxychloroquine
+methotrexate
+azathioprine
+mycophenolate
+tacrolimus
+cyclosporine
+sulfasalazine
