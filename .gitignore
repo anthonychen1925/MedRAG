@@ -13,5 +13,12 @@ venv/
 data/cache/
 *.log
 
+# Generated Redis snapshot (rebuild with: python ingest.py --recreate)
+dump.rdb
+
+# Downloaded source data (CC BY-NC-SA; regenerable via ingest.py).
+# Note: data/drug_list.txt is a curated source file and stays tracked.
+data/ddinter/
+
 # OS
 .DS_Store
