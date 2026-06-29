@@ -665,6 +665,18 @@ def index():
 
 if __name__ == "__main__":
     import os
+
     # Default to 5001 — macOS Control Center / AirPlay Receiver occupies 5000.
     port = int(os.getenv("PORT", "5001"))
-    app.run(debug=True, host="127.0.0.1", port=port)
+
+    # Preload the embedder before serving so the first analysis request is fast
+    # and so model weights are not loaded inside Flask's debug reloader child
+    # (which can raise BrokenPipeError when tqdm writes progress to stdout).
+    from embeddings import get_embedder
+
+    print("[MedRAG] Loading embedder…")
+    get_embedder(settings)
+    print("[MedRAG] Embedder ready.")
+
+    # Debug reloader disabled: reloading + heavy ML model init is unreliable.
+    app.run(debug=True, host="127.0.0.1", port=port, use_reloader=False)

@@ -1,5 +1,5 @@
 # Core pipeline
-redis>=5.0.0                  # Redis Vector Search (HNSW) client
+redis>=5.0.0                  # Redis 8 client (native vector sets: VADD/VSIM/VGETATTR)
 sentence-transformers>=3.0.0  # local BGE embeddings (default, no API cost)
 anthropic>=0.40.0             # Claude Opus 4.8 reasoning engine
 

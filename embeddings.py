@@ -157,7 +157,22 @@ def get_embedder(settings: Settings = default_settings) -> Embedder:
 
     ``USE_STUB_EMBEDDER=true`` always wins (offline pipeline testing). Otherwise
     the provider is chosen by ``EMBED_PROVIDER`` (default "bge").
+
+    Cached as a process singleton so the BGE model is loaded once per server
+    process (important for Flask — reloading it on every request is slow, and
+    loading inside the debug reloader child can raise BrokenPipeError).
     """
+    global _EMBEDDER_SINGLETON
+    if _EMBEDDER_SINGLETON is not None:
+        return _EMBEDDER_SINGLETON
+    _EMBEDDER_SINGLETON = _build_embedder(settings)
+    return _EMBEDDER_SINGLETON
+
+
+_EMBEDDER_SINGLETON: Embedder | None = None
+
+
+def _build_embedder(settings: Settings) -> Embedder:
     if settings.use_stub_embedder:
         return StubEmbedder(dim=settings.embed_dim)
 

@@ -35,7 +35,7 @@ Chunker
 BGE  (BAAI/bge-large-en-v1.5, local, 1024-dim)
   │  Embed each chunk → vector   (no API cost)
   ▼
-Redis 8 Vector Set
+Redis 8 Vector Set  (redis-py client)
   │  Store vectors + JSON attributes (VADD); search with VSIM,
   │  with server-side attribute FILTER for source/section
 
@@ -72,25 +72,131 @@ Structured Report  (with clickable citations → source URLs)
   │  Lab Flags · Monitoring · Alternatives · Uncertainty
   │  References panel: DailyMed · DDInter drug page · FAERS viewer
   ▼
-Physician Review Interface (Flask, app.py)
+Physician Review Interface (Flask, app.py — single process serves UI + pipeline)
 ```
 
 ---
 
+## How It Runs (Runtime)
+
+MedRAG is a **single-process Flask application**. There is no separate frontend server — `app.py` renders the styled UI and orchestrates the full pipeline in one Python process. The static files in `frontend/` are design mockups only; the live UI is embedded in `app.py`.
+
+### Processes required at runtime
+
+| Process | Purpose | Start command |
+|---|---|---|
+| **Redis 8** | Stores ~20k embedded knowledge chunks | `brew services start redis` or `redis-server` |
+| **Flask app** | UI + pipeline orchestration | `source .venv/bin/activate && python app.py` |
+
+The **BGE embedding model** is loaded into RAM when `app.py` starts (not on every request). You will see:
+
+```
+[MedRAG] Loading embedder…
+[MedRAG] Embedder ready.
+* Running on http://127.0.0.1:5001
+```
+
+The app listens on **port 5001** (5000 is often occupied by macOS AirPlay). Open **http://127.0.0.1:5001** in a browser.
+
+> **Use the `.venv` Python.** Running `python app.py` from conda base or system Python will fail at analysis time because `sentence-transformers` is installed in the project venv only.
+
+### Startup sequence (`python app.py`)
+
+1. Load settings from `.env` via `config.py`
+2. Preload **BGE** (`BAAI/bge-large-en-v1.5`) — takes ~10–30 seconds on first start
+3. Start Flask on `127.0.0.1:5001` (debug mode on, auto-reloader **off** — the reloader conflicts with ML model loading)
+
+The embedder is cached as a **process singleton** in `embeddings.py` so it is loaded once per server lifetime.
+
+### Per-request flow (when you submit an analysis)
+
+1. **FHIR parse** (`fhir_parser.py`) — uploaded `.json` (or demo patient) → structured patient record + data quality flags
+2. **Retrieval** (`retrieval.py`) — multiple targeted vector searches against Redis (~14 chunks max by default):
+   - Best interaction chunk per current medication (DDInter)
+   - Proposed drug's label safety sections (openFDA → DailyMed)
+   - Renal dose chunk if patient has reduced kidney function
+   - FAERS adverse-event signal for the proposed drug
+   - General semantic fill to the remaining budget
+3. **Prompt assembly** (`prompt_assembly.py`) — patient + chunks + proposed drug + question
+4. **Claude Opus 4.8** (`api_client.py`) — `CONTEXT.md` as system prompt; returns markdown report with `[chunk N]` citations (~30–60 s)
+5. **Report render** (`app.py`) — markdown parsed into styled section cards; citations link to References & Sources panel
+
+### Index build vs. query
+
+| Step | When | Command |
+|---|---|---|
+| **Index build** | One-time (or when drugs/sources change) | `python ingest.py --recreate` (~25 min, ~20k chunks) |
+| **Query / UI** | Every session | `python app.py` (requires Redis already populated) |
+
+`ingest.py` is **not** run on every startup.
+
 ## Tech Stack
+
+### Core pipeline
 
 | Layer | Technology | Role |
 |---|---|---|
-| Reasoning engine | Claude Opus 4.8 (`claude-opus-4-8`) | Reads retrieved chunks + patient record, generates structured safety report |
-| Embedding model | BGE `BAAI/bge-large-en-v1.5` (local, via `sentence-transformers`) | Converts documents and queries into 1024-dim vectors for semantic search — runs locally, no API cost |
-| Vector database | Redis 8 native **vector sets** (`VADD`/`VSIM`/`VGETATTR`) | Stores embeddings + JSON metadata; cosine KNN search with server-side attribute filtering |
-| Knowledge sources | openFDA labels, DDInter 2.0, openFDA FAERS | Free, citable medical knowledge (see Knowledge Base section) |
-| Patient data | FHIR R4 (uploaded `.json`) | Source of structured patient record parsed at query time |
-| Web framework | Flask (`app.py`) | Serves the physician UI and orchestrates the pipeline |
+| **Language** | Python 3.11+ | Entire backend pipeline, ingestion, retrieval, and web server |
+| **Reasoning engine** | [Anthropic SDK](https://github.com/anthropics/anthropic-sdk-python) → **Claude Opus 4.8** (`claude-opus-4-8`) | Reads retrieved chunks + patient record; generates structured safety report. System prompt = `CONTEXT.md`. |
+| **Embedding model (default)** | [sentence-transformers](https://github.com/UKPLab/sentence-transformers) → **BGE** `BAAI/bge-large-en-v1.5` (1024-dim, via [Hugging Face Hub](https://huggingface.co/BAAI/bge-large-en-v1.5)) | Local document/query embeddings for semantic search — no per-embedding API cost |
+| **Embedding model (optional)** | [Voyage AI SDK](https://github.com/voyage-ai/voyageai-python) → `voyage-3-large` | Cloud embeddings when `EMBED_PROVIDER=voyage` |
+| **Vector database** | **Redis 8** native **vector sets** via [redis-py](https://github.com/redis/redis-py) (`redis>=5.0.0`) | Stores ~20k chunk embeddings + JSON metadata. Commands: `VADD`, `VSIM`, `VGETATTR`, `VSETATTR`, `VCARD`. Cosine KNN with server-side `FILTER` on attributes. |
+| **Numerics** | [NumPy](https://numpy.org/) | Vector serialization (FLOAT32), stub embedder, similarity ops |
+| **Config** | [python-dotenv](https://github.com/theskumar/python-dotenv) | Loads `.env` secrets and tuning parameters |
+| **HTTP client** | [Requests](https://requests.readthedocs.io/) | Fetches openFDA APIs and DDInter CSVs during ingestion |
+
+### Web UI & orchestration
+
+| Layer | Technology | Role |
+|---|---|---|
+| **Web framework** | [Flask](https://flask.palletsprojects.com/) 3.x (`app.py`) | Single process: serves UI, orchestrates pipeline, hosts FAERS viewer at `/source/faers/<drug>` |
+| **Templating** | Jinja2 (via Flask `render_template_string`) | Server-side HTML for setup page, report cards, and FAERS viewer |
+| **CSS / styling** | [Tailwind CSS](https://tailwindcss.com/) (CDN) | Dark glass-panel "bento" layout |
+| **Typography / icons** | Google Fonts (Hanken Grotesk, Inter, Geist) + Material Symbols | UI typography and iconography |
+
+### Patient data standards
+
+| Standard | Role in MedRAG |
+|---|---|
+| **FHIR R4** | Patient input format — uploaded `.json` Bundle parsed by `fhir_parser.py` |
+| **LOINC** | Lab/demographic Observation codes (e.g. eGFR, body weight, smoking status) |
+| **ICD-10** | Condition codes extracted from `Condition` resources when present |
+| **[Synthea](https://github.com/synthetichealth/synthea)** | Recommended tool for generating demo FHIR R4 bundles |
+
+### External knowledge APIs & databases (ingestion)
+
+| Source | API / access | Used for |
+|---|---|---|
+| **openFDA Drug Label API** | `https://api.fda.gov/drug/label.json` | FDA structured product labels → chunked by section |
+| **openFDA FAERS API** | `https://api.fda.gov/drug/event.json` | Top reported adverse events per drug (signal only) |
+| **[DailyMed](https://dailymed.nlm.nih.gov/)** | SPL set-id URLs | Physician-facing citation target for label chunks |
+| **[DDInter 2.0](https://ddinter2.scbdd.com/)** | Downloadable CSVs + drug-detail web pages | Severity-rated drug–drug interaction pairs |
+| **FDA FAERS Public Dashboard** | Linked from FAERS viewer | Broader FAERS exploration (no per-drug deep link) |
+
+### Python dependencies (`requirements.txt`)
+
+| Package | Purpose |
+|---|---|
+| `redis>=5.0.0` | Redis client (vector sets, ping, attribute storage) |
+| `sentence-transformers>=3.0.0` | Local BGE embeddings (default) |
+| `anthropic>=0.40.0` | Claude API client |
+| `voyageai>=0.3.0` | Optional cloud embeddings |
+| `flask>=3.0.0` | Web UI and pipeline orchestration |
+| `python-dotenv>=1.0.0` | Environment variable loading |
+| `requests>=2.31.0` | openFDA / DDInter HTTP fetching |
+| `numpy>=1.26.0` | Vector operations |
+
+### CLI & utilities
+
+| Tool | Role |
+|---|---|
+| `ingest.py` | Index builder — fetch, chunk, embed, upsert to Redis |
+| `run_case.py` | CLI end-to-end runner (`--retrieval-only` for testing without Claude) |
+| `argparse` (stdlib) | CLI argument parsing for `ingest.py` and `run_case.py` |
 
 **Why Claude Opus 4.8:** This task requires deep multi-step reasoning over long interleaved documents (drug monographs can be lengthy), reliable handling of complex patient scenarios with multiple comorbidities, and high accuracy on safety-critical output. The model is instructed by `CONTEXT.md` at system-prompt time.
 
-**Why local BGE embeddings:** `BAAI/bge-large-en-v1.5` is a strong open retrieval model that runs locally via `sentence-transformers`, so there is **no per-embedding API cost** — important when embedding ~20k chunks and re-running ingestion freely. The embedding provider is pluggable (`EMBED_PROVIDER` in `.env`); Voyage AI is also supported if an API key is preferred. Query and document vectors must use the same model, so changing providers requires re-ingesting.
+**Why local BGE embeddings:** `BAAI/bge-large-en-v1.5` is a strong open retrieval model that runs locally via `sentence-transformers`, so there is **no per-embedding API cost** — important when embedding ~20k chunks and re-running ingestion freely. Weights are downloaded from Hugging Face Hub on first use. The embedding provider is pluggable (`EMBED_PROVIDER` in `.env`); Voyage AI is also supported if an API key is preferred. Query and document vectors must use the same model, so changing providers requires re-ingesting.
 
 **Why Redis 8 vector sets:** Redis 8 ships native **vector sets** in core (no separate Redis Stack / RediSearch module needed), so the system runs against a stock local Redis install. `VSIM` gives low-latency cosine KNN, and its `FILTER` expression supports server-side filtering on chunk attributes (e.g. restrict a query to a drug's label-safety sections), which the source-balanced retrieval relies on. Running locally also keeps PHI off third-party infrastructure. Redis is a sponsor of this hackathon.
 
@@ -101,7 +207,7 @@ Physician Review Interface (Flask, app.py)
 The UI presents the physician with three inputs:
 
 **1. FHIR File Upload**
-A `.json` file containing the patient's FHIR R4 bundle. This is the primary source of patient data. The FHIR parser extracts the five relevant resource types and surfaces data quality flags for any clinically important missing fields.
+A `.json` file containing the patient's **FHIR R4 Bundle** (`"resourceType": "Bundle"` with an `"entry"` array). Synthea exports work. Single-resource JSON (e.g. a lone `Patient` object) will parse but produce an empty clinical record. Alternatively, check **Use demo patient** to skip upload.
 
 **2. Proposed Medication Field**
 A structured input capturing: generic drug name, proposed dose and route, and the indication being considered. Generic name is preferred since that is how drug monographs and interaction databases are indexed.
@@ -268,11 +374,11 @@ The current implementation focuses on demonstrating the core pipeline end-to-end
 |---|---|
 | `README.md` | This file. Project overview, architecture, and implementation guide. |
 | `CONTEXT.md` | System prompt loaded into Claude Opus 4.8. Defines input/output structure, behavioral rules, and clinical role. |
-| `config.py` | Centralized, typed settings loaded from environment / `.env` (embedding provider, Redis URL, retrieval tuning). |
-| `fhir_parser.py` | Parses FHIR R4 bundles into structured patient records. Handles `Patient`, `MedicationRequest`, `Condition`, `AllergyIntolerance`, `Observation`. |
-| `embeddings.py` | Embedder interface + implementations: `BGEEmbedder` (default, local), `VoyageEmbedder`, `StubEmbedder`. Selected via `EMBED_PROVIDER`. |
-| `vector_store.py` | Redis 8 vector-set wrapper: upsert (`VADD`), KNN search with attribute `FILTER` (`VSIM`), and in-place attribute updates (`VSETATTR`). |
-| `ingest.py` | Builds the index from all three sources (openFDA labels, DDInter, FAERS); chunks, embeds, and upserts. Reads the drug universe from `data/drug_list.txt`. |
+| `config.py` | Centralized, typed settings loaded from environment / `.env` via `python-dotenv`. |
+| `fhir_parser.py` | Parses FHIR R4 bundles into structured patient records. Handles `Patient`, `MedicationRequest`, `Condition`, `AllergyIntolerance`, `Observation`. Uses LOINC and ICD-10 where present. |
+| `embeddings.py` | Embedder interface + implementations: `BGEEmbedder` (default, local), `VoyageEmbedder`, `StubEmbedder`. Cached as a process singleton; preloaded at app startup. |
+| `vector_store.py` | Redis 8 vector-set wrapper (`redis-py`): upsert (`VADD`), KNN search with attribute `FILTER` (`VSIM`), attribute read/update (`VGETATTR`/`VSETATTR`). |
+| `ingest.py` | Builds the index from all three sources via `requests` (openFDA APIs, DDInter CSVs); chunks, embeds with BGE, upserts to Redis. Reads drug universe from `data/drug_list.txt`. |
 | `retrieval.py` | Source-balanced multi-query retrieval with per-source quotas (per-pair interactions, label safety, renal dosing, FAERS). |
 | `prompt_assembly.py` | Combines parsed patient record + retrieved chunks + proposed medication + physician question into Claude's expected input format. |
 | `api_client.py` | Anthropic SDK wrapper for calling `claude-opus-4-8`; loads `CONTEXT.md` as the system prompt. |
@@ -328,21 +434,45 @@ python ingest.py --dry-run
 
 ## Running It
 
+### One-time setup
+
 ```bash
-# 0. One-time setup
+cd /path/to/MedRAG
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # then add ANTHROPIC_API_KEY; defaults: BGE + local Redis
+cp .env.example .env          # add ANTHROPIC_API_KEY; defaults: BGE + local Redis
 
-# 1. Start a local Redis 8 (e.g. `brew install redis && redis-server`)
+brew services start redis       # or: redis-server
+python ingest.py --recreate     # ~20k chunks, ~25 min on CPU — skip if index already built
+```
 
-# 2. Build the index from all three sources (~20k chunks; one-time, ~25 min on CPU)
-python ingest.py --recreate
+### Every session (web UI)
 
-# 3a. Launch the web UI
-python app.py                 # http://127.0.0.1:5001  (port 5001 avoids macOS AirPlay on 5000)
+```bash
+source .venv/bin/activate
+python app.py                   # wait for [MedRAG] Embedder ready.
+```
 
-# 3b. …or run a single case from the CLI
+Open **http://127.0.0.1:5001** — upload a FHIR R4 **Bundle** (`.json`), enter the proposed drug, and submit.
+
+**Stop and restart** (if port 5001 is in use):
+
+```bash
+kill $(lsof -t -i:5001) 2>/dev/null
+source .venv/bin/activate && python app.py
+```
+
+**Open in Chrome from terminal:**
+
+```bash
+open -a "Google Chrome" http://127.0.0.1:5001
+```
+
+### CLI (no web UI)
+
+```bash
+source .venv/bin/activate
+
 python run_case.py \
   --patient synthetic_patients/elderly_polypharmacy.json \
   --drug ciprofloxacin --dose 500mg --route oral --indication "complicated UTI" \
@@ -350,10 +480,29 @@ python run_case.py \
 # add --retrieval-only to inspect retrieved chunks without a (paid) Claude call
 ```
 
-Configuration lives in `.env` (see `.env.example`): `ANTHROPIC_API_KEY`,
-`EMBED_PROVIDER` (default `bge`), `REDIS_URL` (default `redis://localhost:6379`),
-and retrieval tuning (`RETRIEVAL_TOP_K`, `RETRIEVAL_PER_PAIR_K`,
-`RETRIEVAL_MAX_CHUNKS`).
+### Configuration (`.env`)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | — | Required for report generation |
+| `REDIS_URL` | `redis://localhost:6379` | Local Redis connection |
+| `EMBED_PROVIDER` | `bge` | `bge` (local) \| `voyage` \| `stub` |
+| `RETRIEVAL_TOP_K` | `8` | Chunks from general proposed-drug query |
+| `RETRIEVAL_PER_PAIR_K` | `3` | Chunks per current-medication interaction query |
+| `RETRIEVAL_MAX_CHUNKS` | `14` | Hard cap on chunks passed to Claude |
+
+See `.env.example` for BGE model settings and full list.
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `Address already in use` on 5001 | `kill $(lsof -t -i:5001)` then restart |
+| `ModuleNotFoundError: sentence_transformers` | Activate venv: `source .venv/bin/activate` |
+| `BrokenPipeError` on first analysis | Restart with current `app.py` (embedder preloads at startup) |
+| Empty / weak report | Patient JSON may not be a FHIR R4 **Bundle** with `"entry": [...]` |
+| Redis connection error | `redis-cli ping` → should print `PONG` |
+| Blank page in browser | Use port **5001**, not 5000 |
 
 ---
 
